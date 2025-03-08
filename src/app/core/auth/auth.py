@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import jwt
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +36,7 @@ async def get_current_user(
 
     Raises:
     ------
-        HTTPException: If the token is invalid or the user doesn't exist
+        ValueError: If the token is invalid or the user doesn't exist
 
     """
     jwt_token = None
@@ -48,11 +48,8 @@ async def get_current_user(
         jwt_token = credentials.credentials
     # If neither is present, raise an exception
     else:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication credentials missing",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        msg = "auth:missing_credentials:Authentication credentials missing"
+        raise ValueError(msg)
     try:
         # Decode the JWT token
         payload = jwt.decode(
@@ -65,37 +62,25 @@ async def get_current_user(
         user_id = payload.get("user")
 
         if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            msg = "auth:invalid_credentials:Invalid authentication credentials"
+            raise ValueError(msg)
 
         # Get the expiration time from the token
         expiration = payload.get("exp")
         if expiration is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has no expiration",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            msg = "auth:no_expiration:Token has no expiration"
+            raise ValueError(msg)
 
         # Check if the token has expired
         if datetime.now(UTC) > datetime.fromtimestamp(expiration, tz=UTC):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            msg = "auth:expired:Token has expired"
+            raise ValueError(msg)
 
         # Get the user from the database
         user = await get_user_by_id(db, UserID(id=user_id))
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            msg = "auth:user_not_found:User not found"
+            raise ValueError(msg)
 
         # Update the last_active field - remove timezone to match DB schema
         now = datetime.now(UTC)
@@ -105,11 +90,8 @@ async def get_current_user(
         return user
 
     except jwt.PyJWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from e
+        msg = "auth:invalid_token:Invalid authentication credentials"
+        raise ValueError(msg) from e
 
 
 def is_admin(user: UserModel = Depends(get_current_user)) -> UserModel:  # noqa: B008
@@ -125,12 +107,10 @@ def is_admin(user: UserModel = Depends(get_current_user)) -> UserModel:  # noqa:
 
     Raises:
     ------
-        HTTPException: If the user is not an admin
+        ValueError: If the user is not an admin
 
     """
     if not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions",
-        )
+        msg = "auth:forbidden:Not enough permissions"
+        raise ValueError(msg)
     return user

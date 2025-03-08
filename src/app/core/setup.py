@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
 from typing import Any, AsyncContextManager, AsyncGenerator, Callable
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, Request, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from ..crud.crud_users import create_user, get_user
 from ..schemas.user_schema import UserCreateBaseSchema
@@ -14,6 +14,7 @@ from ..utils.crypto import (
 from .config import AppSettings, DatabaseSettings, settings
 from .db.database import Base, async_get_db
 from .db.database import async_engine as engine
+from .middlewares.auth import auth_exception_middleware
 
 
 # Function to create database tables
@@ -138,47 +139,11 @@ def create_application(
     app = FastAPI(lifespan=lifespan, **kwargs)
     app.include_router(router)
 
-    # Add exception handler for auth-related ValueErrors
-    @app.exception_handler(ValueError)
-    async def auth_exception_handler(request: Request, exc: ValueError) -> JSONResponse:
-        from fastapi import status
-
-        # Check if this is an auth-related ValueError
-        error_str = str(exc)
-        if error_str.startswith("auth:"):
-            parts = error_str.split(":", 2)
-            # Expected format is "auth:type:detail"
-            required_parts = 3
-            if len(parts) >= required_parts:
-                error_type, error_detail = parts[1], parts[2]
-
-                # Map error types to status codes
-                status_codes = {
-                    "missing_credentials": status.HTTP_401_UNAUTHORIZED,
-                    "invalid_credentials": status.HTTP_401_UNAUTHORIZED,
-                    "no_expiration": status.HTTP_401_UNAUTHORIZED,
-                    "expired": status.HTTP_401_UNAUTHORIZED,
-                    "user_not_found": status.HTTP_401_UNAUTHORIZED,
-                    "invalid_token": status.HTTP_401_UNAUTHORIZED,
-                    "forbidden": status.HTTP_403_FORBIDDEN,
-                }
-
-                status_code = status_codes.get(
-                    error_type, status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-                # Add WWW-Authenticate header for 401 responses
-                headers = {}
-                if status_code == status.HTTP_401_UNAUTHORIZED:
-                    headers["WWW-Authenticate"] = "Bearer"
-
-                return JSONResponse(
-                    status_code=status_code,
-                    content={"detail": error_detail},
-                    headers=headers,
-                )
-
-        # For non-auth ValueErrors, let FastAPI handle them normally
-        raise exc
+    @app.middleware("http")
+    async def scoped_auth_middleware(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        """Middleware to handle auth-related ValueErrors thrown by auth functions."""
+        return await auth_exception_middleware(request, call_next, router.prefix)
 
     return app

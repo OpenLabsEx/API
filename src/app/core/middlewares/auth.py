@@ -29,7 +29,8 @@ async def auth_exception_middleware(
     except ValueError as exc:
         # Only handle ValueErrors if they're from auth and we're in an API route
         error_str = str(exc)
-        if error_str.startswith("auth:") and request.url.path.startswith(router_prefix):
+
+        if error_str.startswith("auth:"):
             parts = error_str.split(":", 2)
             # Expected format is "auth:type:detail"
             required_parts = 3
